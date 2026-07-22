@@ -1,28 +1,34 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
+"""
+Main entry point for the Document Copilot API.
 
-from app.api.auth import router as auth_router
-from app.api.chat import router as chat_router
+Run locally:
+
+uv run uvicorn app.main:app --reload
+"""
+
+from fastapi import FastAPI
+
 from app.config import settings
 
-app = FastAPI(title="Document Copilot")
-app.include_router(auth_router)
-app.include_router(chat_router)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+app = FastAPI(
+    title="Document Copilot",
+    version="0.1.0",
+    description="Internal AI chatbot for querying company documents securely.",
 )
 
 
+@app.get("/")
+async def root():
+    return {
+        "message": "Welcome to Document Copilot",
+        "environment": "development",
+        "status": "running",
+    }
+
+
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000)
+async def health():
+    return {
+        "status": "healthy",
+    }
