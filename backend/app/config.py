@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from pydantic import BaseSettings, SettingsConfigDict, computed_field
+from pydantic import computed_field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 
