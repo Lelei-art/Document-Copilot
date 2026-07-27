@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
     embedding_model: str = "nomic-embed-text:latest"
+    embedding_dimensions: int = 768
+    ollama_agent_request_limit: int = 8
 
     # Retrieval settings
     retrieval_candidate_k: int = 50
@@ -33,32 +35,23 @@ class Settings(BaseSettings):
     retrieval_rrf_k: int = 60
     retrieval_neighbor_radius: int = 1
     retrieval_fts_config: str = "english"
+    retrieval_fts_keyword_min: int = 3
+    retrieval_fts_keyword_max: int = 5
+    retrieval_fts_keyword_fast_path_tokens: int = 5
 
     # CORS
-    # Comma-separated in .env
     allowed_origins: str = "http://localhost:5173"
 
     @computed_field
     @property
     def sqlalchemy_database_url(self) -> str:
-        """
-        Normalize Supabase/Postgres URLs for SQLAlchemy + psycopg.
-        """
         url = self.database_url
 
         if url.startswith("postgresql://"):
-            return url.replace(
-                "postgresql://",
-                "postgresql+psycopg://",
-                1,
-            )
+            return url.replace("postgresql://", "postgresql+psycopg://", 1)
 
         if url.startswith("postgres://"):
-            return url.replace(
-                "postgres://",
-                "postgresql+psycopg://",
-                1,
-            )
+            return url.replace("postgres://", "postgresql+psycopg://", 1)
 
         return url
 

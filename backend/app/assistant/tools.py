@@ -68,9 +68,18 @@ def _parse_fiscal_years(raw: str | None) -> list[int] | None:
         if not part or part.lower() in ("null", "none"):
             continue
 
+        if "-" in part:
+            start_raw, end_raw = part.split("-", 1)
+            start = int(start_raw.strip())
+            end = int(end_raw.strip())
+            if end < start:
+                start, end = end, start
+            years.extend(range(start, end + 1))
+            continue
+
         years.append(int(part))
 
-    return years or None
+    return sorted(set(years)) or None
 
 
 def _search_sync(

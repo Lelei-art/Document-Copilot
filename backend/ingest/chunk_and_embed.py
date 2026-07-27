@@ -24,6 +24,8 @@ from ingest.chunking import (
 )
 from ingest.embeddings import EMBED_BATCH_SIZE, embed_texts
 
+DB_WRITE_BATCH_SIZE = 50
+
 
 @dataclass(frozen=True, slots=True)
 class IngestCounts:
@@ -76,16 +78,21 @@ def _document_tables_from_records(
     records: list[ChunkRecord],
 ) -> list[DocumentTable]:
     tables_by_index: dict[int, DocumentTable] = {}
+
     for record in records:
         metadata = record.chunk_metadata
         if metadata.get("chunk_kind") != "table_row":
             continue
+
         table_data = metadata.get("table")
         table_index = metadata.get("table_index")
+
         if not isinstance(table_data, dict) or not isinstance(table_index, int):
             continue
+
         if table_index in tables_by_index:
             continue
+
         tables_by_index[table_index] = DocumentTable(
             document_id=document_id,
             table_index=table_index,
@@ -95,6 +102,7 @@ def _document_tables_from_records(
             table_data=table_data,
             source_html_hash=table_data["source_html_hash"],
         )
+
     return list(tables_by_index.values())
 
 
@@ -112,9 +120,12 @@ def ingest_document(
     elif skip_existing and _document_has_chunks(session, document.id):
         print(f"Skipping existing chunks for {document.accession_number}")
         return 0
+    elif not dry_run:
+        _delete_chunks(session, document.id)
 
     html_path = html_path_for_accession(document.accession_number)
     print(f"Chunking {document.accession_number} from {html_path.name}...")
+
     records = chunk_document(
         html_path,
         _filing_metadata(document),
@@ -138,19 +149,25 @@ def ingest_document(
 
     texts = [record.text for record in records]
     print(f"  Embedding {len(texts)} chunk(s) (batch_size={EMBED_BATCH_SIZE})...")
+
     vectors = embed_texts(texts)
     document_tables = _document_tables_from_records(document.id, records)
+
     for table in document_tables:
         session.add(table)
-    if document_tables:
         session.flush()
+
     table_ids_by_index = {table.table_index: str(table.id) for table in document_tables}
+
+    pending_chunks = 0
 
     for record, embedding in zip(records, vectors, strict=True):
         metadata = dict(record.chunk_metadata)
         table_index = metadata.get("table_index")
+
         if isinstance(table_index, int) and table_index in table_ids_by_index:
             metadata["table_id"] = table_ids_by_index[table_index]
+
         session.add(
             DocumentChunk(
                 document_id=document.id,
@@ -164,8 +181,18 @@ def ingest_document(
             )
         )
 
+        pending_chunks += 1
+
+        if pending_chunks >= DB_WRITE_BATCH_SIZE:
+            session.flush()
+            pending_chunks = 0
+
+    if pending_chunks:
+        session.flush()
+
     session.commit()
     print(f"  Wrote {len(records)} chunk(s) for {document.accession_number}")
+
     return len(records)
 
 
@@ -187,6 +214,7 @@ def ingest_accessions(
                     SourceDocument.accession_number == accession
                 )
             )
+
             if document is None:
                 raise ValueError(
                     f"No source_document for accession {accession}. "
@@ -215,6 +243,7 @@ def ingest_accessions(
                 skip_existing=skip_existing,
                 force=force,
             )
+
             counts = IngestCounts(
                 processed=counts.processed + 1,
                 skipped=counts.skipped,
@@ -232,6 +261,7 @@ def ingest_all(
     force: bool = False,
 ) -> IngestCounts:
     accessions = [accession for accession, _ in iter_all_html_paths()]
+
     return ingest_accessions(
         accessions,
         max_chunks=max_chunks,
@@ -244,10 +274,14 @@ def ingest_all(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group(required=True)
+
     target.add_argument("--accession", help="Process one filing by accession number")
     target.add_argument(
-        "--all", action="store_true", help="Process all manifest filings"
+        "--all",
+        action="store_true",
+        help="Process all manifest filings",
     )
+
     parser.add_argument(
         "--max-chunks",
         type=int,
@@ -270,6 +304,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Delete existing chunks for target document(s) before re-ingesting",
     )
+
     return parser
 
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from ollama import Client
 
-EMBED_BATCH_SIZE = 100
-MODEL_NAME = "nomic-embed-text"
+from app.config import settings
 
-_client = Client(host="http://localhost:11434")
+EMBED_BATCH_SIZE = 100
+
+_client = Client(host=settings.ollama_base_url)
 
 
 def embed_texts(
@@ -18,8 +19,7 @@ def embed_texts(
     """
     Generate embeddings locally using Ollama.
 
-    Uses the nomic-embed-text model (768 dimensions),
-    matching the Supabase pgvector column.
+    Uses the configured Ollama embedding model, usually nomic-embed-text.
     """
 
     if not texts:
@@ -32,15 +32,16 @@ def embed_texts(
 
         for text in batch:
             response = _client.embed(
-                model=MODEL_NAME,
+                model=settings.embedding_model,
                 input=text,
             )
 
             embedding = response["embeddings"][0]
 
-            if len(embedding) != 768:
+            if len(embedding) != settings.embedding_dimensions:
                 raise ValueError(
-                    f"Expected embedding dimension 768, got {len(embedding)}"
+                    f"Expected embedding dimension {settings.embedding_dimensions}, "
+                    f"got {len(embedding)}"
                 )
 
             vectors.append(embedding)
