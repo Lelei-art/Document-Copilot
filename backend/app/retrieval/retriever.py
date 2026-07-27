@@ -1,4 +1,4 @@
-"""Hybrid retrieval orchestrator: embed → search → fuse → hydrate."""
+"""Hybrid retrieval orchestrator: embed -> search -> fuse -> hydrate."""
 
 from __future__ import annotations
 
@@ -9,14 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database.documents import get_chunks_by_ids, get_surrounding_chunks
+from app.database.models import DocumentChunk, SourceDocument
 from app.database.session import get_session
 from app.retrieval.embeddings import embed_query
 from app.retrieval.fusion import reciprocal_rank_fusion
 from app.retrieval.keywords import extract_fts_keywords
 from app.retrieval.queries import full_text_search, semantic_search
 from app.retrieval.types import RankedChunkHit, RetrievedPassage, SearchFilters
-
-from app.database.models import DocumentChunk, SourceDocument
 
 
 class DocumentRetriever:
@@ -34,6 +33,7 @@ class DocumentRetriever:
         resolved_candidate_k = (
             candidate_k if candidate_k is not None else settings.retrieval_candidate_k
         )
+
         if session is not None:
             return self._search_with_session(
                 session,
@@ -64,25 +64,33 @@ class DocumentRetriever:
         candidate_k: int,
         include_neighbors: bool,
     ) -> list[RetrievedPassage]:
-        with ThreadPoolExecutor(max_workers=2) as prep:
-            embed_future = prep.submit(embed_query, query)
-            kw_future = prep.submit(extract_fts_keywords, query, filters=filters)
-            query_vec = embed_future.result()
-            fts_query = kw_future.result()
+        fts_query = extract_fts_keywords(query, filters=filters)
 
-        semantic_hits, fts_hits = _dual_search(
-            query_vec,
-            fts_query,
-            candidate_k=candidate_k,
-            filters=filters,
-        )
-
-        semantic_ids = [hit.chunk_id for hit in semantic_hits]
-        fts_ids = [hit.chunk_id for hit in fts_hits]
-        fused = reciprocal_rank_fusion(
-            [semantic_ids, fts_ids],
-            k=settings.retrieval_rrf_k,
-        )[:top_k]
+        try:
+            query_vec = embed_query(query)
+            semantic_hits, fts_hits = _dual_search(
+                query_vec,
+                fts_query,
+                candidate_k=candidate_k,
+                filters=filters,
+            )
+            semantic_ids = [hit.chunk_id for hit in semantic_hits]
+            fts_ids = [hit.chunk_id for hit in fts_hits]
+            fused = reciprocal_rank_fusion(
+                [semantic_ids, fts_ids],
+                k=settings.retrieval_rrf_k,
+            )[:top_k]
+        except Exception as exc:
+            print(
+                f"Semantic search unavailable; falling back to full-text search: {exc}"
+            )
+            fts_hits = full_text_search(
+                session,
+                fts_query,
+                limit=top_k,
+                filters=filters,
+            )
+            fused = [(hit.chunk_id, hit.score or 0.0) for hit in fts_hits]
 
         if not fused:
             return []
@@ -100,6 +108,7 @@ class DocumentRetriever:
                 continue
 
             neighbors: list[RetrievedPassage] = []
+
             if include_neighbors:
                 for neighbor_chunk in get_surrounding_chunks(
                     session,
@@ -110,6 +119,7 @@ class DocumentRetriever:
                         continue
                     if neighbor_chunk.document is None:
                         continue
+
                     seen_neighbor_ids.add(neighbor_chunk.id)
                     neighbors.append(
                         _passage_from_chunk(
@@ -138,7 +148,7 @@ def _dual_search(
     candidate_k: int,
     filters: SearchFilters | None,
 ) -> tuple[list[RankedChunkHit], list[RankedChunkHit]]:
-    """Run semantic and full-text search in parallel (separate DB sessions)."""
+    """Run semantic and full-text search in parallel using separate DB sessions."""
 
     def semantic() -> list[RankedChunkHit]:
         with get_session() as search_session:
