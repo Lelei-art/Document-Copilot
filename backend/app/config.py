@@ -22,12 +22,16 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # Ollama
+    # Ollama/local model settings.
+    # These are only used when ASSISTANT_MODE=llm.
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"
     embedding_model: str = "nomic-embed-text:latest"
     embedding_dimensions: int = 768
     ollama_agent_request_limit: int = 8
+
+    # Use "retrieval" on Railway if you do not want paid AI APIs.
+    assistant_mode: str = "llm"
 
     # Retrieval settings
     retrieval_candidate_k: int = 50

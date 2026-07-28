@@ -1,4 +1,4 @@
-"""Coordinates one chat turn: agent → validate → stream → persist."""
+"""Coordinates one chat turn: agent -> validate -> stream -> persist."""
 
 from __future__ import annotations
 
@@ -15,10 +15,11 @@ from app.assistant.outputs import Citation, GroundedAnswer
 from app.auth.dependencies import CurrentUser
 from app.chat.messages import text_from_parts
 from app.chat.streaming import (
-    stream_grounded_turn_and_persist,
     stream_error,
+    stream_grounded_turn_and_persist,
     stream_status,
 )
+from app.config import settings
 from app.grounding.validator import (
     GroundingValidator,
     prune_unreferenced_citations,
@@ -85,8 +86,7 @@ def _fallback_grounded_answer(
 
     citations: list[Citation] = []
     lines = [
-        "I found relevant filing passages, but the local Ollama model could not "
-        "complete the full analysis. Here are the strongest retrieved sources:"
+        "I found relevant filing passages. Here are the strongest retrieved sources:"
     ]
 
     for index, passage in enumerate(passages, start=1):
@@ -97,7 +97,11 @@ def _fallback_grounded_answer(
         year = passage.fiscal_year or passage.filing_date.year
         section = f", {passage.section}" if passage.section else ""
         page = f", page {passage.page}" if passage.page else ""
-        lines.append(f"{index}. {passage.ticker} {passage.form} FY{year}{section}{page}: {excerpt} [{index}]")
+
+        lines.append(
+            f"{index}. {passage.ticker} {passage.form} FY{year}"
+            f"{section}{page}: {excerpt} [{index}]"
+        )
         citations.append(
             Citation(
                 citation_index=index,
@@ -124,7 +128,6 @@ async def run_turn(
     thread_title: str,
     retriever: DocumentRetriever,
 ) -> AsyncIterator[str]:
-
     print("\n" + "=" * 80)
     print("run_turn() started")
     print("=" * 80)
@@ -141,9 +144,38 @@ async def run_turn(
 
     async for event in stream_status(
         "analyzing",
-        "Analyzing your question…",
+        "Analyzing your question...",
     ):
         yield event
+
+    if settings.assistant_mode.casefold() == "retrieval":
+        registry = TurnRegistry()
+
+        async for event in stream_status(
+            "searching",
+            "Searching filing passages...",
+        ):
+            yield event
+
+        grounded, registry = _fallback_grounded_answer(
+            query,
+            registry=registry,
+            retriever=retriever,
+        )
+        validation = await GroundingValidator().validate(grounded, registry)
+
+        async for event in stream_grounded_turn_and_persist(
+            client=client,
+            thread_id=thread_id,
+            user=user,
+            user_message=user_message,
+            thread_title=thread_title,
+            answer=grounded,
+            registry=registry,
+            validation=validation,
+        ):
+            yield event
+        return
 
     grounded: GroundedAnswer | None = None
     validation = None
@@ -189,7 +221,7 @@ async def run_turn(
             grounded = await agent_task
             print("Agent completed successfully.")
 
-        except Exception as exc:
+        except Exception:
             print("\n" + "=" * 80)
             print("AGENT EXCEPTION")
             traceback.print_exc()
@@ -197,7 +229,7 @@ async def run_turn(
 
             async for event in stream_status(
                 "retrying",
-                "Local model output was invalid; returning retrieved sources instead.",
+                "Model output was invalid; returning retrieved sources instead.",
             ):
                 yield event
 
@@ -211,13 +243,11 @@ async def run_turn(
 
         async for event in stream_status(
             "verifying",
-            "Verifying citations…",
+            "Verifying citations...",
         ):
             yield event
 
-        grounded = prune_unreferenced_citations(
-            grounded,
-        )
+        grounded = prune_unreferenced_citations(grounded)
 
         validation = await GroundingValidator().validate(
             grounded,
@@ -229,7 +259,7 @@ async def run_turn(
 
         async for event in stream_status(
             "retrying",
-            "Could not fully verify citations; retrying with stricter grounding…",
+            "Could not fully verify citations; retrying with stricter grounding...",
         ):
             yield event
 
@@ -243,7 +273,7 @@ async def run_turn(
     if validation.ok:
         async for event in stream_status(
             "streaming",
-            "Preparing answer…",
+            "Preparing answer...",
         ):
             yield event
 

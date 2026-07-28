@@ -15,7 +15,6 @@ COPY alembic ./alembic
 COPY alembic.ini ./
 COPY app ./app
 COPY ingest ./ingest
-COPY scripts ./scripts
 RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
