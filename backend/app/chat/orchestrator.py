@@ -90,9 +90,13 @@ def _fallback_grounded_answer(
     ]
 
     for index, passage in enumerate(passages, start=1):
-        excerpt = " ".join(passage.text.strip().split())
-        if len(excerpt) > FALLBACK_EXCERPT_CHARS:
-            excerpt = excerpt[:FALLBACK_EXCERPT_CHARS].rstrip() + "..."
+        citation_excerpt = " ".join(passage.text.strip().split())
+
+        answer_excerpt = citation_excerpt
+        if len(answer_excerpt) > FALLBACK_EXCERPT_CHARS:
+            answer_excerpt = (
+                answer_excerpt[:FALLBACK_EXCERPT_CHARS].rsplit(" ", 1)[0] + "..."
+            )
 
         year = passage.fiscal_year or passage.filing_date.year
         section = f", {passage.section}" if passage.section else ""
@@ -100,13 +104,13 @@ def _fallback_grounded_answer(
 
         lines.append(
             f"{index}. {passage.ticker} {passage.form} FY{year}"
-            f"{section}{page}: {excerpt} [{index}]"
+            f"{section}{page}: {answer_excerpt} [{index}]"
         )
         citations.append(
             Citation(
                 citation_index=index,
                 chunk_id=passage.chunk_id,
-                excerpt=excerpt,
+                excerpt=citation_excerpt,
             )
         )
 
